@@ -1,0 +1,13 @@
+﻿WhiteDNS Linux bridge
+Copyright 2026 WhiteDNS
+
+Includes Lantern Soar v0.2.3 (Apache-2.0) with WhiteDNS transport
+modifications. Upstream: https://github.com/getlantern/soar
+Pinned source: https://github.com/getlantern/soar/tree/v0.2.3
+The complete upstream license and WhiteDNS change notes are in licenses/.
+
+The bundled Iran resolver and range lists come from KevinNet DNS (MIT);
+their notice is in licenses/Soar-data-THIRD_PARTY.md.
+
+The WhiteDNS copyright above concerns the bridge integration. Upstream
+engine code retains its original authorship and license notices.

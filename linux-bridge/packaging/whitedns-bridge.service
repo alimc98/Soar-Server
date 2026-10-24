@@ -1,0 +1,35 @@
+[Unit]
+Description=WhiteDNS Linux bridge (Soar DNS tunnel to local SOCKS5)
+Documentation=https://github.com/WhiteDNS/WhiteDNS-Desktop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=whitedns
+Group=whitedns
+EnvironmentFile=-/etc/whitedns-bridge/bridge.env
+ExecStart=/usr/local/bin/whitedns-bridge -profile-file /etc/whitedns-bridge/profile -listen 127.0.0.1:10886
+Restart=always
+RestartSec=5s
+TimeoutStopSec=15s
+LimitNOFILE=4096
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/etc/whitedns-bridge
+
+[Install]
+WantedBy=multi-user.target

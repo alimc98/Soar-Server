@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="fa" dir="rtl" data-theme="dark">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>WhiteDNS · Soar Panel</title><link rel="preload" href="fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="redesign.css"><link rel="stylesheet" href="ltr.css"><script src="i18n.js" defer></script><script src="settings.js" defer></script><script src="ui.js" defer></script><script src="app.js" defer></script><script src="maintenance.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>WhiteDNS · Soar Panel</title><link rel="preload" href="fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="redesign.css"><link rel="stylesheet" href="ltr.css"><link rel="stylesheet" href="studio.css"><script src="i18n.js" defer></script><script src="settings.js" defer></script><script src="ui.js" defer></script><script src="app.js" defer></script><script src="maintenance.js" defer></script></head>
 <body>
 <section id="login-view" class="login-view">
  <div class="login-tools"><button class="language-toggle quiet" type="button" aria-label="Change language">English</button><button id="login-theme" class="icon-button" type="button" aria-label="تغییر تم"></button></div>
@@ -18,6 +18,7 @@
   <span class="nav-caption">مدیریت سرور</span><nav aria-label="صفحات پنل">
    <a href="#dashboard" data-page="dashboard"><span data-icon="dashboard"></span>نمای کلی</a>
    <a href="#clients" data-page="clients"><span data-icon="users"></span>حساب‌های کاربری <span id="nav-count" class="count">0</span></a>
+   <a href="#socks" data-page="socks"><span data-icon="globe"></span>خروجی SOCKS5</a>
    <a href="#events" data-page="events"><span data-icon="activity"></span>رویدادها</a>
    <a href="#admin" data-page="admin"><span data-icon="user"></span>حساب مدیر</a>
    <a href="#settings" data-page="settings"><span data-icon="settings"></span>تنظیمات سرور</a>
@@ -33,7 +34,22 @@
  </header>
  <main id="main"><div id="page-error" class="banner error" role="alert" hidden></div>
  <section id="page-dashboard" class="page">
-  <div class="page-heading"><div><h1>نمای کلی سرور</h1><p class="muted">منابع سیستم و وضعیت اتصال‌ها</p></div><button class="primary new-client"><span data-icon="plus"></span>حساب جدید</button></div>
+  <div class="studio-hero">
+   <div class="studio-hero-copy">
+    <p class="studio-kicker"><span class="studio-pulse" aria-hidden="true"></span>استودیوی شبکهٔ WhiteDNS</p>
+    <h1>سرور تو، روی بوم.</h1>
+    <p class="studio-lede">حساب بساز، ترافیک را ببین و خروجی امن را در چند کلیک به 3x-ui وصل کن.</p>
+    <div class="studio-hero-actions"><button class="primary new-client" type="button"><span data-icon="plus"></span>حساب جدید</button><a class="studio-ghost" href="#socks"><span data-icon="globe"></span>خروجی SOCKS5</a></div>
+   </div>
+   <div class="studio-hero-art" aria-hidden="true">
+    <span class="studio-orbit orbit-a"></span><span class="studio-orbit orbit-b"></span>
+    <div class="studio-float float-a"><span>حساب فعال</span><strong id="hero-accounts">—</strong></div>
+    <div class="studio-float float-b"><span>جریان باز</span><strong id="hero-streams">—</strong></div>
+    <div class="studio-float float-c"><span>مدت اجرا</span><strong id="hero-uptime">—</strong></div>
+    <span class="studio-glint glint-a"></span><span class="studio-glint glint-b"></span>
+   </div>
+  </div>
+  <div class="studio-section-head"><div><p class="studio-overline">پایش زنده</p><h2>نبض سرور</h2></div><span class="studio-live"><i aria-hidden="true"></i>به‌روزرسانی هر ۵ ثانیه</span></div>
   <div class="resource-cards">
    <article class="card resource-card"><div class="reading-caption"><span data-icon="cpu"></span>پردازنده</div><div class="reading-value"><strong id="cpu-reading">—</strong><span>%</span></div><div id="cpu-label" class="reading-detail">در انتظار نمونهٔ سرور</div><div id="cpu-spark" class="spark" role="img" aria-label="روند واقعی مصرف پردازنده"></div></article>
    <article class="card resource-card"><div class="reading-caption"><span data-icon="memory"></span>حافظه</div><div class="reading-value"><strong id="ram-reading">—</strong><span>%</span></div><div id="ram-label" class="reading-detail" dir="ltr">—</div><div id="ram-spark" class="spark" role="img" aria-label="روند واقعی مصرف حافظه"></div></article>
@@ -49,6 +65,43 @@
  </section>
  <section id="page-clients" class="page" hidden><div class="page-heading"><div><p class="eyebrow">کنترل دسترسی</p><h1>حساب‌های کاربری</h1><p class="muted">حجم، تاریخ انقضا، سرعت و جریان‌های هم‌زمان هر حساب را تنظیم کنید.</p></div><button class="primary new-client"><span data-icon="plus"></span>حساب جدید</button></div><article class="card table-card"><div class="table-toolbar"><label class="search"><span data-icon="search"></span><span class="sr-only">جست‌وجوی حساب</span><input id="search" type="search" placeholder="جست‌وجوی نام، یادداشت یا دامنه…"></label><div class="filter-field"><label class="sr-only" for="status-filter">فیلتر وضعیت</label><select id="status-filter"><option value="">همهٔ وضعیت‌ها</option><option value="active">فعال</option><option value="disabled">غیرفعال</option><option value="expired">منقضی</option><option value="exhausted">حجم تمام‌شده</option></select></div><span id="filtered-count" class="muted"></span><button id="export-csv" class="quiet">خروجی CSV</button></div><div id="bulk-toolbar" class="bulk-toolbar" hidden><span id="selection-count" role="status" aria-live="polite"></span><button id="clear-selection" type="button" class="quiet">لغو انتخاب</button><button id="bulk-delete" type="button" class="danger"><span data-icon="trash"></span>حذف انتخاب‌شده‌ها</button></div><div class="table-scroll" tabindex="0" aria-label="جدول حساب‌ها"><table><thead><tr><th class="selection-cell"><input id="select-all-clients" type="checkbox" aria-label="انتخاب همهٔ حساب‌های نمایش‌داده‌شده" aria-describedby="selection-help"></th><th>نام حساب / دامنه</th><th>وضعیت</th><th>مصرف / حجم</th><th>انقضا</th><th>جریان باز</th><th>عملیات</th></tr></thead><tbody id="clients-body"></tbody></table></div><div id="clients-empty" class="empty" hidden><h2>حسابی پیدا نشد</h2><p>یک حساب بسازید یا فیلترهای جست‌وجو را تغییر دهید.</p></div><div class="table-footer"><span id="selection-help">انتخاب همه فقط حساب‌های نمایش‌داده‌شده را شامل می‌شود؛ با تغییر جست‌وجو یا فیلتر، انتخاب‌ها پاک می‌شوند.</span><span>سقف حساب‌های پنل: ۵۱۲ حساب</span><span>صفر در حجم، سرعت و انقضا به معنی نامحدود است.</span></div></article><p class="hint">هر لینک نمایندهٔ یک حساب است. اگر لینک را چند نفر استفاده کنند، حجم و محدودیت‌های همان حساب بین آن‌ها مشترک است. «جریان باز» تعداد دستگاه یا کاربر نیست.</p></section>
  <section id="page-events" class="page" hidden><div class="page-heading"><div><p class="eyebrow">ردیابی تغییرات</p><h1>رویدادهای مدیریت</h1><p class="muted">۲۰۰ رویداد اخیر؛ آدرس سایت‌ها و محتوای ترافیک ثبت نمی‌شوند.</p></div></div><article class="card"><ol id="events-list" class="events-list"></ol></article></section>
+ <section id="page-socks" class="page" hidden>
+  <div class="page-heading"><div><p class="eyebrow">خروجی شبکه</p><h1>خروجی SOCKS5</h1><p class="muted">یک خروجی احراز‌هویت‌شده برای 3x-ui بساز؛ ترافیک از همین سرور و با همان سهمیه و محدودیت حساب عبور می‌کند.</p></div></div>
+  <div class="socks-layout">
+   <article class="card socks-hero-card">
+    <div class="socks-card-head"><div><p class="socks-label">سرویس خروجی</p><h2>دروازهٔ خروج</h2></div><span id="socks-status-chip" class="socks-chip" data-live="false">غیرفعال</span></div>
+    <form id="socks-form" class="socks-form">
+     <label class="socks-switch" for="socks-enabled"><input id="socks-enabled" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="socks-switch-text"><b>فعال باشد</b><small>پس از ذخیره، سرویس روی آدرس زیر شنود می‌کند.</small></span></label>
+     <div class="socks-listen-field"><label for="socks-listen">آدرس شنود</label><input id="socks-listen" dir="ltr" placeholder="127.0.0.1:1080" aria-describedby="socks-listen-help" autocomplete="off" spellcheck="false"><small id="socks-listen-help" class="setting-range">مثال: 0.0.0.0:1080 — پیش‌فرض 127.0.0.1 برای امنیت</small></div>
+     <button class="primary" type="submit"><span data-icon="check"></span>ذخیرهٔ تنظیمات خروجی</button>
+    </form>
+    <div class="socks-metrics"><div><span>آدرس فعال</span><b id="socks-bound" dir="ltr">—</b></div><div><span>اتصال‌های باز</span><b id="socks-active">—</b></div><div><span>کل اتصال‌ها</span><b id="socks-total">—</b></div></div>
+    <p id="socks-status-error" class="socks-status-error" role="alert" hidden></p>
+   </article>
+   <article class="card socks-credential-card">
+    <div class="socks-card-head"><div><p class="socks-label">اعتبارنامهٔ حساب</p><h2>رمز اختصاصی</h2></div><span class="socks-card-icon" data-icon="key"></span></div>
+    <p class="hint">برای هر حساب یک نام کاربری و رمز جدا ساخته می‌شود.</p>
+    <label for="socks-client">حساب</label><select id="socks-client"></select>
+    <div id="socks-cred-empty" class="socks-empty" hidden><span data-icon="users"></span><p>هنوز حسابی برای اتصال وجود ندارد.</p></div>
+    <div id="socks-cred-body" hidden>
+     <div class="socks-field"><span>نام کاربری</span><div class="socks-code"><code id="socks-username" dir="ltr"></code><button type="button" class="icon-button" data-socks-copy="username" aria-label="کپی نام کاربری"><span data-icon="copy"></span></button></div></div>
+     <div class="socks-field"><span>رمز خروجی</span><div class="socks-code"><code id="socks-password" dir="ltr"></code><button id="socks-reveal" type="button" class="icon-button" aria-label="نمایش رمز خروجی" aria-pressed="false"><span data-icon="eye"></span></button><button type="button" class="icon-button" data-socks-copy="password" aria-label="کپی رمز خروجی"><span data-icon="copy"></span></button></div></div>
+     <p id="socks-account-state" class="hint"></p>
+     <button id="socks-rotate" type="button" class="secondary"><span data-icon="refresh"></span>تعویض رمز خروجی</button>
+     <small class="socks-footnote">تعویض رمز SOCKS، لینک تونل و ساب را تغییر نمی‌دهد.</small>
+    </div>
+   </article>
+   <article class="card socks-outbound-card">
+    <div class="socks-card-head"><div><p class="socks-label">3x-ui / Xray</p><h2>اتصال به 3x-ui</h2></div><span class="socks-card-icon" data-icon="server"></span></div>
+    <p class="hint">این قطعه را در بخش Outbounds پنل 3x-ui اضافه کنید. ترافیک TCP از این سرور خارج می‌شود.</p>
+    <label for="socks-endpoint-host">آدرس این سرور از دید 3x-ui</label><input id="socks-endpoint-host" dir="ltr" placeholder="panel.example.com" aria-describedby="socks-endpoint-help" autocomplete="off" spellcheck="false"><small id="socks-endpoint-help" class="setting-range">مطمئن شوید 3x-ui می‌تواند این آدرس و پورت را ببیند.</small>
+    <div class="socks-json-wrap"><pre id="socks-json" dir="ltr" tabindex="0" aria-label="قطعهٔ خروجی 3x-ui"></pre><button id="socks-copy-json" type="button" class="secondary"><span data-icon="copy"></span>کپی خروجی</button></div>
+    <p class="hint socks-guide"><bdi>3x-ui → Xray Configs → Outbounds → Add Outbound → socks</bdi></p>
+    <ul class="socks-facts"><li>همان سهمیه، سرعت و پورت‌های مجاز حساب</li><li>فقط TCP؛ UDP پشتیبانی نمی‌شود.</li><li>مقصدهای خصوصی و loopback مسدود هستند.</li></ul>
+    <p class="socks-warning">این خروجی TCP را مستقیم از این سرور عبور می‌دهد و از تونل DNS نمی‌گذرد. اگر 3x-ui روی سرور دیگری است، آدرس شنود را روی IP خصوصی/عمومی تنظیم و با فایروال محدود کنید. SOCKS5 رمز را رمزنگاری نمی‌کند؛ برای اینترنت عمومی از WireGuard یا HTTPS استفاده کنید. در قطع سراسری که سرور ایران به این پنل دسترسی مستقیم ندارد، از پل لینوکسی linux-bridge روی سرور ایران استفاده کنید.</p>
+   </article>
+  </div>
+ </section>
  <section id="page-settings" class="page" hidden>
   <div class="page-heading"><div><p class="eyebrow">پیکربندی سرویس</p><h1>تنظیمات سرور</h1><p class="muted">اندازهٔ بسته، ظرفیت مسیر و تنظیمات اتصال در لینک‌های خروجی.</p></div></div>
   <form id="settings-form" class="card settings-card">

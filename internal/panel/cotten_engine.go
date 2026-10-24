@@ -236,7 +236,7 @@ func (m *Manager) ServeTCP(listener net.Listener) error {
 				frame := binary.BigEndian.AppendUint16(nil, uint16(len(response)))
 				frame = append(frame, response...)
 				c.SetWriteDeadline(time.Now().Add(5 * time.Second))
-				if _, err := io.Copy(c, strings.NewReader(string(frame))); err != nil {
+				if _, err := c.Write(frame); err != nil {
 					return
 				}
 				m.dnsOut.Add(uint64(len(response)))

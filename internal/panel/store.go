@@ -2,7 +2,9 @@ package panel
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
@@ -10,9 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +30,11 @@ var ErrConflict = errors.New("account changed; refresh and retry")
 
 const MaxClients = 512
 
+// DefaultSocksListen keeps the SOCKS5 egress private to the panel host. Operators
+// who need a remote 3x-ui server can bind it to a private/public address and must
+// protect it with the per-account password and a firewall rule.
+const DefaultSocksListen = "127.0.0.1:1080"
+
 type Settings struct {
 	TunnelNameservers map[string]string `json:"tunnel_nameservers,omitempty"`
 	PublicIP          string            `json:"public_ip,omitempty"`
@@ -37,6 +46,14 @@ type Settings struct {
 	Country           string            `json:"country"`
 	AllowPorts        []uint16          `json:"allow_ports"`
 	SoarSettings      *ProfileSettings  `json:"soarSettings,omitempty"`
+	SocksEnabled      bool              `json:"socks_enabled"`
+	SocksListen       string            `json:"socks_listen"`
+}
+
+func (s *Settings) normalize() {
+	if strings.TrimSpace(s.SocksListen) == "" {
+		s.SocksListen = DefaultSocksListen
+	}
 }
 
 func (s Settings) Validate() error {
@@ -84,6 +101,16 @@ func (s Settings) Validate() error {
 			return errors.New("invalid destination port")
 		}
 	}
+	if listen := strings.TrimSpace(s.SocksListen); listen != "" {
+		host, port, err := net.SplitHostPort(listen)
+		if err != nil || strings.ContainsAny(host, " \t\r\n") || len(host) > 253 {
+			return errors.New("invalid SOCKS5 listen address; use host:port")
+		}
+		p, err := strconv.Atoi(port)
+		if err != nil || p < 1 || p > 65535 {
+			return errors.New("invalid SOCKS5 listen port")
+		}
+	}
 	return s.profileSettings().Validate()
 }
 
@@ -104,6 +131,7 @@ type Client struct {
 	StreamLimit    int    `json:"stream_limit"`
 	Revision       uint64 `json:"revision"`
 	UsageEpoch     uint64 `json:"usage_epoch"`
+	SocksEpoch     uint64 `json:"socks_epoch,omitempty"`
 	CreatedAt      int64  `json:"created_at"`
 	UpdatedAt      int64  `json:"updated_at"`
 	LastSeen       int64  `json:"last_seen"`
@@ -203,6 +231,7 @@ func (s *Store) Initialized() bool {
 }
 func (s *Store) Init(cfg Settings, name, password string) error {
 	cfg.BaseZone = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(cfg.BaseZone), "."))
+	cfg.normalize()
 	if e := cfg.Validate(); e != nil {
 		return e
 	}
@@ -247,9 +276,13 @@ func (s *Store) Settings() (v Settings, e error) {
 		p := DefaultProfileSettings()
 		v.SoarSettings = &p
 	}
+	if e == nil {
+		v.normalize()
+	}
 	return
 }
 func (s *Store) SaveSettings(v Settings) error {
+	v.normalize()
 	if e := v.Validate(); e != nil {
 		return e
 	}
@@ -458,6 +491,73 @@ func (s *Store) Rotate(id string) (c Client, e error) {
 	})
 	return
 }
+
+// socksPassword derives a per-account SOCKS5 password from the existing tunnel
+// seed, so backups, deletion and key rotation keep a single source of truth.
+// SocksEpoch lets an administrator revoke only the proxy password without
+// invalidating tunnel profiles or subscriptions.
+func socksPassword(seed []byte, epoch uint64) string {
+	mac := hmac.New(sha256.New, seed)
+	fmt.Fprintf(mac, "WhiteDNS SOCKS5 credential v1:%d", epoch)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Store) SocksCredential(id string) (username, password string, c Client, e error) {
+	c, e = s.Get(id)
+	if e != nil {
+		return
+	}
+	seed, e := s.Seed(id)
+	if e != nil {
+		return
+	}
+	return c.ID, socksPassword(seed, c.SocksEpoch), c, nil
+}
+
+// CheckSocks authenticates a SOCKS5 username/password pair. The username is the
+// account ID; the password is derived from the account seed and current epoch.
+func (s *Store) CheckSocks(username, password string) (Client, error) {
+	var c Client
+	if len(username) != 32 || !identityPattern.MatchString(username) || len(password) < 16 || len(password) > 128 {
+		// Keep a comparable amount of work for malformed usernames.
+		socksPassword([]byte("invalid socks username"), 0)
+		return c, ErrDenied
+	}
+	c, err := s.Get(username)
+	if err != nil {
+		socksPassword([]byte("invalid socks username"), 0)
+		return c, ErrDenied
+	}
+	seed, err := s.Seed(username)
+	if err != nil {
+		socksPassword([]byte("invalid socks username"), 0)
+		return c, ErrDenied
+	}
+	expected := socksPassword(seed, c.SocksEpoch)
+	if !hmac.Equal([]byte(expected), []byte(password)) || c.Status(time.Now()) != "active" {
+		return c, ErrDenied
+	}
+	return c, nil
+}
+
+// RotateSocks revokes the SOCKS5 password without changing the tunnel identity.
+func (s *Store) RotateSocks(id string) (c Client, e error) {
+	e = s.db.Update(func(tx *bolt.Tx) error {
+		c, e = getClient(tx, id)
+		if e != nil {
+			return e
+		}
+		c.SocksEpoch++
+		c.Revision++
+		c.UpdatedAt = time.Now().UnixMilli()
+		if e := putJSON(tx.Bucket(clients), []byte(id), c); e != nil {
+			return e
+		}
+		return addEvent(tx, "client.socks_rotated", id)
+	})
+	return
+}
+
 func (s *Store) Delete(id string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		if _, e := getClient(tx, id); e != nil {

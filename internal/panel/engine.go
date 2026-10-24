@@ -70,6 +70,7 @@ type accountRuntime struct {
 	closed   bool
 	pending  int
 	conns    map[*meterConn]struct{}
+	rate     atomic.Int64
 	rateMu   sync.Mutex
 	next     time.Time
 }
@@ -162,6 +163,8 @@ func (m *Manager) Reconcile() error {
 	}
 	for id, c := range desired {
 		if rt, ok := m.accounts[id]; ok && rt.client.UsageEpoch == c.UsageEpoch {
+			// Rate edits apply without tearing down live streams.
+			rt.rate.Store(c.RateBytes)
 			continue
 		} else if ok {
 			delete(m.accounts, id)
@@ -177,6 +180,7 @@ func (m *Manager) Reconcile() error {
 		ctx, cancel := context.WithCancel(m.ctx)
 		v := &virtualPacketConn{owner: m, input: make(chan packet, 128), done: make(chan struct{})}
 		rt := &accountRuntime{client: c, ctx: ctx, cancel: cancel, pc: v, conns: map[*meterConn]struct{}{}, zones: cfg.accountZones(c), soarPCs: map[string]*virtualPacketConn{}}
+		rt.rate.Store(c.RateBytes)
 		m.accounts[id] = rt
 		for _, zone := range rt.zones {
 			m.zones[zone] = rt
@@ -447,6 +451,20 @@ func (m *Manager) dialEgress(r *accountRuntime, ctx context.Context, network, ad
 	transferred = true
 	return mc, nil
 }
+
+// DialForClient opens an egress connection that is metered, quota-checked and
+// stream-limited exactly like tunnel traffic. It is used by the local SOCKS5
+// listener so a second protocol cannot bypass account policy.
+func (m *Manager) DialForClient(ctx context.Context, id, network, addr string) (net.Conn, error) {
+	m.mu.RLock()
+	r := m.accounts[id]
+	m.mu.RUnlock()
+	if r == nil {
+		return nil, ErrDenied
+	}
+	return m.dial(r, ctx, network, addr)
+}
+
 func (m *Manager) ActiveCounts() map[string]int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -469,7 +487,11 @@ func (m *Manager) Disconnect(id string) {
 	if m.accounts[id] == r {
 		delete(m.accounts, id)
 		if r != nil {
-			delete(m.zones, r.client.Zone)
+			for _, zone := range r.zones {
+				if m.zones[zone] == r {
+					delete(m.zones, zone)
+				}
+			}
 		}
 	}
 	m.mu.Unlock()
@@ -534,22 +556,19 @@ func (c *meterConn) Read(p []byte) (int, error) {
 	if c.datagram {
 		return c.readDatagram(p)
 	}
-	info, e := c.manager.store.Get(c.rt.client.ID)
-	if e != nil || info.Status(time.Now()) != "active" {
-		return 0, ErrDenied
-	}
-	n, e := c.Conn.Read(c.chunk(p, info.RateBytes))
+	rate := c.rt.rate.Load()
+	n, e := c.Conn.Read(c.chunk(p, rate))
 	if n == 0 {
 		return 0, e
 	}
-	if err := c.pace(n, info.RateBytes); err != nil {
+	if err := c.pace(n, rate); err != nil {
 		return 0, err
 	}
 	// Bill payload after it exists, before it can be forwarded to the client.
 	if c.rt.ctx.Err() != nil {
 		return 0, ErrDenied
 	}
-	allowed, _, err := c.manager.store.reserveEpoch(info.ID, n, false, c.rt.client.UsageEpoch)
+	allowed, _, err := c.manager.store.reserveEpoch(c.rt.client.ID, n, false, c.rt.client.UsageEpoch)
 	if err != nil {
 		return 0, err
 	}
@@ -563,24 +582,21 @@ func (c *meterConn) Write(p []byte) (int, error) {
 		return c.writeDatagram(p)
 	}
 	total := 0
+	rate := c.rt.rate.Load()
 	for len(p) > 0 {
-		info, e := c.manager.store.Get(c.rt.client.ID)
-		if e != nil || info.Status(time.Now()) != "active" {
-			return total, ErrDenied
-		}
-		part := c.chunk(p, info.RateBytes)
-		if e := c.pace(len(part), info.RateBytes); e != nil {
+		part := c.chunk(p, rate)
+		if e := c.pace(len(part), rate); e != nil {
 			return total, e
 		}
 		if c.rt.ctx.Err() != nil {
 			return total, ErrDenied
 		}
-		allowed, epoch, e := c.manager.store.reserveEpoch(info.ID, len(part), true, c.rt.client.UsageEpoch)
+		allowed, epoch, e := c.manager.store.reserveEpoch(c.rt.client.ID, len(part), true, c.rt.client.UsageEpoch)
 		if e != nil {
 			return total, e
 		}
 		n, e := c.Conn.Write(part[:allowed])
-		if refundErr := c.manager.store.refund(info.ID, allowed-n, true, epoch); refundErr != nil {
+		if refundErr := c.manager.store.refund(c.rt.client.ID, allowed-n, true, epoch); refundErr != nil {
 			c.Close()
 			return total + n, refundErr
 		}

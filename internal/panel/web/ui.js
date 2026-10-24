@@ -19,6 +19,8 @@ const panelUI = (() => {
   clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',
   server:'M3 3h18v7H3z M3 14h18v7H3z M7 6.5h.01 M7 17.5h.01 M11 6.5h6 M11 17.5h6',
   network:'M3 5h6v6H3z M15 5h6v6h-6z M9 17h6v5H9z M6 11v3h12v-3 M12 14v3',
+  globe:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M3 12h18 M12 3c2.7 3 2.7 15 0 18 M12 3c-2.7 3-2.7 15 0 18',
+  copy:'M9 9h11v11H9z M4 15V4h11',
   moon:'M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13z',
   sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5',
   eye:'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12 M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6',
@@ -161,7 +163,7 @@ const panelUI = (() => {
  function chart(id,keys,fixedMax,spark=false){
   const container=get(id),w=600,h=spark?80:180,pad=5;
   const values=samples.flatMap(s=>keys.map(k=>s[k])).filter(Number.isFinite);
-  container.replaceChildren();
+  container.replaceChildren();container.classList.toggle('is-empty',!values.length);
   if(!values.length){const empty=document.createElement('div');empty.className='spark-empty';empty.textContent=spark?panelText("داده‌ای در دسترس نیست"):panelText("در انتظار دو نمونهٔ واقعی از سرور");container.append(empty);return;}
   const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,preserveAspectRatio:'none','aria-hidden':'true'});
   if(!spark)for(let i=0;i<4;i++){const y=pad+i*(h-2*pad)/3;svg.append(svgEl('line',{x1:0,x2:w,y1:y,y2:y,class:'chart-gridline'}));}
@@ -191,6 +193,9 @@ const panelUI = (() => {
   text('uptime',fmt.format(Math.floor(d.uptime_seconds/3600))+panelText(" ساعت و ")+fmt.format(Math.floor(d.uptime_seconds/60)%60)+panelText(" دقیقه"));
   text('platform',h.platform);text('panel-version',d.version);text('footer-version',d.version);
   text('stat-accounts',fmt.format(d.accounts));text('stat-active',fmt.format(d.states.active)+panelText(" حساب فعال"));text('stat-up',size(d.upload_bytes));text('stat-down',size(d.download_bytes));
+  text('hero-accounts',fmt.format(d.states.active));text('hero-streams',fmt.format(d.active_streams));
+  const uptimeHours=Math.floor(d.uptime_seconds/3600);
+  text('hero-uptime',uptimeHours>=24?fmt.format(Math.floor(uptimeHours/24))+panelText(" روز"):fmt.format(uptimeHours)+panelText(" ساعت"));
   const states={active:panelText("فعال"),disabled:panelText("غیرفعال"),expired:panelText("منقضی"),exhausted:panelText("حجم تمام‌شده")};
   get('status-breakdown').replaceChildren(...Object.entries(states).map(([key,label])=>{const row=document.createElement('div'),badge=document.createElement('span'),value=document.createElement('strong');badge.className='badge '+key;badge.textContent=label;value.textContent=fmt.format(d.states[key]);row.append(badge,value);return row;}));
   for(const [id,key,max] of [['cpu-spark','cpu',100],['ram-spark','ram',100],['disk-spark','disk',100],['streams-spark','streams',0]])chart(id,[key],max,true);

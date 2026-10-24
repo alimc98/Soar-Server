@@ -46,12 +46,17 @@ type HTTP struct {
 	preview       *restorePreview
 	inspectBackup func(context.Context, string) (BackupSummary, error)
 	access        *AccessController
+	socks         *SocksServer
 }
 
 func NewHTTP(s *Store, m *Manager, trustLoopbackProxy bool) *HTTP {
 	assets, _ := fs.Sub(webFiles, "web")
 	return &HTTP{store: s, manager: m, trustProxy: trustLoopbackProxy, sessions: map[string]loginSession{}, attempts: map[string]loginAttempt{}, assets: http.FileServer(http.FS(assets))}
 }
+
+// SetSocks attaches the local SOCKS5 egress listener. Tests and embedding
+// callers that do not need the listener may omit it.
+func (h *HTTP) SetSocks(x *SocksServer) { h.socks = x }
 func jsonReply(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -178,7 +183,7 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.URL.Path {
-		case "/", "/index.html", "/app.js", "/maintenance.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
+		case "/", "/index.html", "/app.js", "/maintenance.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/studio.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
 			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 				raw, e := webFiles.ReadFile("web/index.html")
 				if e != nil {
@@ -254,6 +259,15 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/settings" {
 		h.settings(w, r)
+		return
+	}
+	if r.URL.Path == "/api/socks" && r.Method == "GET" {
+		cfg, e := h.store.Settings()
+		if e != nil {
+			errorReply(w, 500, errors.New("cannot read settings"))
+			return
+		}
+		jsonReply(w, 200, map[string]any{"status": h.socks.Status(cfg), "public_ip": cfg.PublicIP, "nameserver_host": cfg.NameserverHost})
 		return
 	}
 	if r.URL.Path == "/api/tunnel-domains" || r.URL.Path == "/api/tunnel-domains/check" {
@@ -388,7 +402,28 @@ func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 		errorReply(w, 400, e)
 		return
 	}
+	in.normalize()
+	if e := in.Validate(); e != nil {
+		errorReply(w, 400, e)
+		return
+	}
+	old, e := h.store.Settings()
+	if e != nil {
+		errorReply(w, 500, errors.New("cannot read settings"))
+		return
+	}
+	// Bind the new listener before persisting so a port conflict cannot leave
+	// the database claiming an address that is not actually serving.
+	if h.socks != nil {
+		if e := h.socks.Apply(in.SocksEnabled, in.SocksListen); e != nil {
+			errorReply(w, 400, e)
+			return
+		}
+	}
 	if e := h.store.SaveSettings(in); e != nil {
+		if h.socks != nil {
+			_ = h.socks.Apply(old.SocksEnabled, old.SocksListen)
+		}
 		errorReply(w, 400, e)
 		return
 	}
@@ -466,6 +501,30 @@ func (h *HTTP) clientAction(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, 200, c)
 			return
 		}
+		if action == "socks" {
+			cfg, e := h.store.Settings()
+			if e != nil {
+				errorReply(w, 500, errors.New("cannot read settings"))
+				return
+			}
+			username, password, _, e := h.store.SocksCredential(id)
+			if e != nil {
+				errorReply(w, 500, errors.New("cannot derive SOCKS5 credential"))
+				return
+			}
+			jsonReply(w, 200, map[string]any{
+				"client_id":     c.ID,
+				"client_name":   c.Name,
+				"username":      username,
+				"password":      password,
+				"socks_epoch":   c.SocksEpoch,
+				"enabled":       c.Status(time.Now()) == "active",
+				"listen":        cfg.SocksListen,
+				"service_on":    cfg.SocksEnabled,
+				"service_ready": h.socks.Status(cfg).Listening,
+			})
+			return
+		}
 		if action == "link" || action == "qr.png" {
 			links, e := h.store.Profiles(id)
 			if e != nil {
@@ -500,6 +559,18 @@ func (h *HTTP) clientAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "POST" && action == "subscription-rotate" {
 		h.subscriptionAdmin(w, r, id)
+		return
+	}
+	if r.Method == "POST" && action == "socks-rotate" {
+		c, e = h.store.RotateSocks(id)
+		if e == nil && h.socks != nil {
+			h.socks.CloseClient(id)
+		}
+		if e != nil {
+			errorReply(w, 400, e)
+			return
+		}
+		jsonReply(w, 200, map[string]any{"ok": true, "socks_epoch": c.SocksEpoch})
 		return
 	}
 	switch {

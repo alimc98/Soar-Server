@@ -137,6 +137,91 @@ and program/data are backed up before replacement. A failed activation rolls
 back. Connections briefly drop during restart. Older installations without the
 maintenance service should rerun the guided installer once.
 
+## 6. SOCKS5 outbound for 3x-ui
+
+The **SOCKS5 egress** page lets a 3x-ui/Xray installation use this server as an
+authenticated outbound. Enable the service, set a listen address and save. The
+default `127.0.0.1:1080` is reachable only from the panel host. If 3x-ui runs on
+the same host, keep it. If it runs elsewhere, bind a private interface address
+(for example `10.0.0.5:1080` or `0.0.0.0:1080`) and allow only the 3x-ui source
+IP in the firewall. Prefer WireGuard or another private link; SOCKS5 does not
+encrypt either the password or the proxied traffic.
+
+Select an account on the same page. The username is its 32-character ID; the
+password is unique to that account. Copy both into a 3x-ui outbound:
+
+```json
+{
+  "tag": "soar-socks",
+  "protocol": "socks",
+  "settings": {
+    "servers": [
+      {
+        "address": "10.0.0.5",
+        "port": 1080,
+        "users": [{ "user": "ACCOUNT_ID", "pass": "ACCOUNT_PASSWORD" }]
+      }
+    ]
+  }
+}
+```
+
+Add it under **Xray Configs → Outbounds → Add Outbound → socks**, then route the
+traffic you want through it. The address must be reachable from the 3x-ui host,
+not merely from your browser. To revoke only the proxy password, use **Rotate
+egress password**; existing SOCKS connections for that account are closed, but
+the tunnel profile and subscription stay valid. Disabling, expiring or exhausting
+the account also blocks new SOCKS authentication.
+
+This egress is **direct TCP**, not a route through the DNS tunnel. It supports
+CONNECT only; UDP/QUIC and UDP ASSOCIATE do not work. The account's quota, speed,
+destination-port allowlist, stream limit and public-destination protection all
+apply, so destinations outside **Allowed ports** (default 80/443) are refused.
+If the 3x-ui host is remote and cannot use a private network, forward the port
+over SSH instead of exposing it publicly:
+
+```bash
+ssh -N -L 127.0.0.1:11080:127.0.0.1:1080 root@PANEL_SERVER
+```
+
+Then use `127.0.0.1:11080` as the outbound address on the 3x-ui machine.
+
+The page shows whether the listener is active, the bound address, open/total
+connections and any bind error. A bind failure does not stop the panel. The
+service accepts at most 512 SOCKS connections, applies a 10-second handshake and
+20-second dial timeout, and throttles repeated authentication failures per
+source IP.
+
+### Total blackout: Linux bridge on the Iranian server
+
+The SOCKS5 page above is a **direct** egress and therefore requires the 3x-ui
+host to reach this panel's server. If a nationwide blackout removes that path,
+run the bridge from `linux-bridge/` on the Iranian 3x-ui host instead. It uses a
+direct `soar://` account profile, runs the Soar client, and exposes
+`127.0.0.1:10886` locally. Xray adds a socks outbound pointing at that address,
+so VLESS users connect domestically to the Iranian server and their TCP traffic
+leaves through the DNS tunnel to this server:
+
+```
+VLESS client -> 3x-ui on Iran -> socks 127.0.0.1:10886 -> bridge -> DNS tunnel -> this server -> Internet
+```
+
+Install it while normal access still exists, because the bridge cannot fetch a
+subscription from an unreachable panel later:
+
+```bash
+tar -xzf whitedns-bridge-0.1.0-linux-amd64.tar.gz
+cd whitedns-bridge-0.1.0-linux-amd64
+sudo bash install.sh 'soar://...'
+```
+
+The installer prints the ready-to-paste 3x-ui outbound and stores a random local
+SOCKS password when enabled. The bridge only listens on loopback and supports
+CONNECT/TCP; UDP/QUIC does not work. The account's quota, rate, allowed ports and
+stream limit still apply on this server. See
+[`linux-bridge/README.md`](../linux-bridge/README.md) for the full procedure,
+systemd unit and troubleshooting.
+
 ## Troubleshooting
 
 Use the full URL including its random path. To inspect service status:

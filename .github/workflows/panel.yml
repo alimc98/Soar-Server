@@ -44,6 +44,13 @@ jobs:
           bash tests/installer_test.sh
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh
+      - name: Verify the Linux bridge
+        working-directory: linux-bridge
+        run: |
+          GOWORK=off go mod download
+          GOWORK=off go test ./... -count=1 -timeout 180s
+          GOWORK=off go vet ./...
+          GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o "$RUNNER_TEMP/whitedns-bridge" ./cmd/whitedns-bridge
       - name: Build offline Linux bundle
         run: |
           python3 scripts/build_panel_bundle.py

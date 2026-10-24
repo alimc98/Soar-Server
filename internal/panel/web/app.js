@@ -2,8 +2,8 @@
 const $ = id => document.getElementById(id);
 const apiPath = path => new URL('api'+path,document.baseURI).href;
 const states = {active:panelText("فعال"), disabled:panelText("غیرفعال"), expired:panelText("منقضی"), exhausted:panelText("حجم تمام‌شده")};
-const pages = {dashboard:panelText("نمای کلی"), clients:panelText("حساب‌های کاربری"), events:panelText("رویدادهای مدیریت"), settings:panelText("تنظیمات سرور"), backup:panelText("پشتیبان و بازیابی"), updates:panelText("به‌روزرسانی پنل"), security:panelText("دامنه و امنیت"), admin:panelText("حساب مدیر")};
-const events = {'admin.credentials_updated':panelText("تغییر اطلاعات ورود مدیر"),'backup.restored':panelText("بازیابی پشتیبان"),'maintenance.update_requested':panelText("درخواست به‌روزرسانی پنل"),'maintenance.restore_requested':panelText("درخواست بازیابی پشتیبان"),'access.updated':panelText("تغییر دامنه و آدرس امن"),'admin.login':panelText("ورود مدیر"),'backup.exported':panelText("دریافت پشتیبان"),'settings.updated':panelText("تغییر تنظیمات"),'client.created':panelText("ساخت حساب"),'client.updated':panelText("ویرایش حساب"),'client.deleted':panelText("حذف حساب"),'client.rotated':panelText("تعویض لینک حساب"),'client.usage_reset':panelText("صفر کردن مصرف"),'client.disconnected':panelText("قطع اتصال‌های باز"),'client.subscription_rotated':panelText("تعویض لینک ساب")};
+const pages = {dashboard:panelText("نمای کلی"), clients:panelText("حساب‌های کاربری"), socks:panelText("خروجی SOCKS5"), events:panelText("رویدادهای مدیریت"), settings:panelText("تنظیمات سرور"), backup:panelText("پشتیبان و بازیابی"), updates:panelText("به‌روزرسانی پنل"), security:panelText("دامنه و امنیت"), admin:panelText("حساب مدیر")};
+const events = {'admin.credentials_updated':panelText("تغییر اطلاعات ورود مدیر"),'backup.restored':panelText("بازیابی پشتیبان"),'maintenance.update_requested':panelText("درخواست به‌روزرسانی پنل"),'maintenance.restore_requested':panelText("درخواست بازیابی پشتیبان"),'access.updated':panelText("تغییر دامنه و آدرس امن"),'admin.login':panelText("ورود مدیر"),'backup.exported':panelText("دریافت پشتیبان"),'settings.updated':panelText("تغییر تنظیمات"),'client.created':panelText("ساخت حساب"),'client.updated':panelText("ویرایش حساب"),'client.deleted':panelText("حذف حساب"),'client.rotated':panelText("تعویض لینک حساب"),'client.usage_reset':panelText("صفر کردن مصرف"),'client.disconnected':panelText("قطع اتصال‌های باز"),'client.subscription_rotated':panelText("تعویض لینک ساب"),'client.socks_rotated':panelText("تعویض رمز خروجی")};
 let shareClient=null,shareMode='profile',directLink='',cottenLink='',subscriptionLink='',subscriptionURLs=[];
 let csrf = '', clients = [], connections = {}, currentPage = 'dashboard', editing = null, sharedLink = '', busy = false, toastTimer;
 const number = n => new Intl.NumberFormat(panelI18n.locale).format(n);
@@ -28,12 +28,12 @@ function signOut(){const wasSignedIn=!!csrf;selectedClients.clear();resetAdminFo
 async function enter(token){csrf=token;$('login-view').hidden=true;$('app').hidden=false;$('login-password').value='';navigate();await refresh();window.panelMaintenance?.afterLogin();}
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;$('login-error').textContent='';try{const v=await api('/login','POST',{name:$('login-name').value,password:$('login-password').value});await enter(v.csrf);}catch(err){$('login-error').textContent=message(err);}finally{button.disabled=false;}});
 $('logout').onclick=e=>withButton(e.currentTarget,async()=>{await api('/logout','POST');signOut();});
-function navigate(){if(currentPage==='admin')resetAdminForm();panelUI.closeActionMenu(false);panelUI.closeSelectMenu();currentPage=Object.hasOwn(pages,location.hash.slice(1))?location.hash.slice(1):'dashboard';$('page-title').textContent=pages[currentPage];for(const [key] of Object.entries(pages))$('page-'+key).hidden=key!==currentPage;for(const a of document.querySelectorAll('nav a')){if(a.dataset.page===currentPage)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}panelUI.closeMenu();if(csrf&&(['settings','events','backup','updates','security','admin'].includes(currentPage)))loadPage().catch(e=>toast(message(e)));}
+function navigate(){if(currentPage==='admin')resetAdminForm();panelUI.closeActionMenu(false);panelUI.closeSelectMenu();currentPage=Object.hasOwn(pages,location.hash.slice(1))?location.hash.slice(1):'dashboard';$('page-title').textContent=pages[currentPage];for(const [key] of Object.entries(pages))$('page-'+key).hidden=key!==currentPage;for(const a of document.querySelectorAll('nav a')){if(a.dataset.page===currentPage)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}panelUI.closeMenu();if(csrf&&(['settings','socks','events','backup','updates','security','admin'].includes(currentPage)))loadPage().catch(e=>toast(message(e)));}
 window.addEventListener('hashchange',navigate);
 $('menu-toggle').onclick=()=>panelUI.toggleMenu();
 $('open-clients').onclick=()=>location.hash='clients';
 $('theme-toggle').onclick=()=>panelUI.toggleTheme();
-async function refresh(){if(!csrf||busy)return;busy=true;try{const [d,c]=await Promise.all([api('/dashboard'),api('/clients')]);clients=c.clients;connections=c.connections;$('nav-count').textContent=number(clients.length);renderDashboard(d);renderClients();if(currentPage==='events')await loadPage();$('sync-state').textContent=panelText("به‌روز · ")+new Date().toLocaleTimeString(panelI18n.locale,{hour:'2-digit',minute:'2-digit'});$('sync-state').classList.remove('stale');$('page-error').hidden=true;}catch(e){$('sync-state').textContent=panelText("ارتباط برقرار نیست");$('sync-state').classList.add('stale');panelUI.setConnection(false);$('page-error').textContent=message(e);$('page-error').hidden=false;}finally{busy=false;}}
+async function refresh(){if(!csrf||busy)return;busy=true;try{const [d,c]=await Promise.all([api('/dashboard'),api('/clients')]);clients=c.clients;connections=c.connections;$('nav-count').textContent=number(clients.length);renderDashboard(d);renderClients();if(currentPage==='events')await loadPage();if(currentPage==='socks')api('/socks').then(v=>{socksData.status=v.status;socksData.publicIP=v.public_ip;renderSocksStatus();}).catch(()=>{});$('sync-state').textContent=panelText("به‌روز · ")+new Date().toLocaleTimeString(panelI18n.locale,{hour:'2-digit',minute:'2-digit'});$('sync-state').classList.remove('stale');$('page-error').hidden=true;}catch(e){$('sync-state').textContent=panelText("ارتباط برقرار نیست");$('sync-state').classList.add('stale');panelUI.setConnection(false);$('page-error').textContent=message(e);$('page-error').hidden=false;}finally{busy=false;}}
 $('refresh').onclick=e=>withButton(e.currentTarget,refresh);
 setInterval(()=>{if(!document.hidden)refresh();},5000);
 function renderDashboard(d){panelUI.renderDashboard(d);}
@@ -51,12 +51,12 @@ function renderClients(){
  if(panelUI.accountMenuOpen())return;
  const rows=visibleClients(),visible=new Set(rows.map(c=>c.id));
  for(const id of selectedClients)if(!visible.has(id))selectedClients.delete(id);
- const focused=document.activeElement?.dataset.selectionId;
+ const focused=document.activeElement?.dataset.selectionId,focusedAction=document.activeElement?.classList.contains('account-actions-trigger')?document.activeElement.dataset.clientId:'';
  $('filtered-count').textContent=number(rows.length)+panelText(" حساب");$('clients-empty').hidden=rows.length!==0;
  $('clients-body').replaceChildren(...rows.map(c=>{
   const tr=node('tr'),selection=node('td',null,'selection-cell'),check=node('input');check.type='checkbox';check.dataset.selectionId=c.id;check.checked=selectedClients.has(c.id);check.setAttribute('aria-label',panelText("انتخاب حساب ")+c.name);tr.classList.toggle('selected',check.checked);
   check.onchange=()=>{if(check.checked)selectedClients.add(c.id);else selectedClients.delete(c.id);tr.classList.toggle('selected',check.checked);updateSelectionControls();};selection.append(check);
-  const name=node('td');name.append(node('strong',c.name),node('span',c.connect_zone||c.zone,'domain'),node('small',c.engines==='both'?'Soar + Cotten':c.engines==='cotten'?'Cotten':'Soar','domain'));
+  const name=node('td'),identity=node('div',null,'account-identity'),identityText=node('div',null,'account-identity-text'),avatar=node('span',Array.from(c.name.trim())[0]||'?','account-avatar');avatar.setAttribute('aria-hidden','true');identityText.append(node('strong',c.name),node('span',c.connect_zone||c.zone,'domain'),node('small',c.engines==='both'?'Soar + Cotten':c.engines==='cotten'?'Cotten':'Soar','domain'));identity.append(avatar,identityText);name.append(identity);
   const state=node('td');state.append(node('span',states[status(c)],'badge '+status(c)));
   const usage=node('td'),used=c.upload_bytes+c.download_bytes;usage.append(node('span',bytes(used)+' / '+(c.quota_bytes?bytes(c.quota_bytes):'∞'),'usage'));
   if(c.quota_bytes){const p=node('progress');p.max=c.quota_bytes;p.value=used;p.setAttribute('aria-label',panelText("مصرف حجم ")+c.name);usage.append(p);}
@@ -64,7 +64,7 @@ function renderClients(){
   bar.append(actionButton(panelText("لینک / QR"),()=>share(c)),actionButton(panelText("ویرایش"),async()=>openClient(c)));bar.append(panelUI.accountActions(c,(value,button)=>withButton(button,()=>clientAction(clients.find(current=>current.id===c.id)||c,value))));actions.append(bar);
   tr.append(selection,name,state,usage,node('td',date(c.expires_at)),count,actions);return tr;
  }));
- updateSelectionControls();if(focused)$('clients-body').querySelector('[data-selection-id="'+CSS.escape(focused)+'"]')?.focus({preventScroll:true});
+ updateSelectionControls();if(focused)$('clients-body').querySelector('[data-selection-id="'+CSS.escape(focused)+'"]')?.focus({preventScroll:true});if(focusedAction)$('clients-body').querySelector('.account-actions-trigger[data-client-id="'+CSS.escape(focusedAction)+'"]')?.focus({preventScroll:true});
 }
 function clearSelection(){selectedClients.clear();panelUI.closeActionMenu(false);renderClients();}
 $('search').addEventListener('input',clearSelection);$('status-filter').onchange=clearSelection;
@@ -136,6 +136,108 @@ function download(blob,name){const url=URL.createObjectURL(blob),a=node('a');a.h
 $('save-profile').onclick=()=>download(new Blob([sharedLink+'\n'],{type:'text/plain'}),shareMode==='subscription'?'whitedns-subscription-url.txt':shareMode==='cotten'?'cottendns-profile.txt':'soar-profile.txt');
 $('download-backup').onclick=e=>withButton(e.currentTarget,async()=>{if(!await confirmAction(panelText("دانلود پشتیبان کامل"),panelText("این فایل شامل کلیدهای خصوصی حساب‌هاست. آیا آن را در جای امن نگهداری می‌کنید؟")))return;const response=await fetch(apiPath('/backup'),{credentials:'same-origin',cache:'no-store'});if(!response.ok)throw Error(panelText("پشتیبان دریافت نشد. دوباره وارد پنل شوید."));download(await response.blob(),'soar-panel-'+new Date().toISOString().slice(0,10)+'.db');toast(panelText("پشتیبان دریافت شد."));});
 $('export-csv').onclick=()=>{const fields=['Name','Zone','Status','Upload bytes','Download bytes','Quota bytes','Expires UTC','Stream limit'];const cell=v=>'"'+String(v).replaceAll('"','""')+'"';const csv=[fields,...clients.map(c=>[c.name,c.zone,status(c),c.upload_bytes,c.download_bytes,c.quota_bytes,c.expires_at?new Date(c.expires_at).toISOString():'',c.stream_limit])].map(row=>row.map(v=>cell(/^[=+@\-\t\r]/.test(String(v))?"'"+v:v)).join(',')).join('\r\n');download(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'}),'soar-accounts.csv');};
-async function loadPage(){if(currentPage==='admin'){await loadAdmin();return;}if(['backup','updates','security'].includes(currentPage)){await window.panelMaintenance?.load(currentPage);return;}if(currentPage==='settings'){const s=await api('/settings');$('base-zone').value=s.base_zone;$('country').value=s.country;$('resolvers').value=s.resolvers.join('\n');$('allow-ports').value=s.allow_ports.join(', ');soarSettingsForm.load(s.soarSettings);}else if(currentPage==='events'){const list=await api('/events');$('events-list').replaceChildren(...list.map(ev=>{const li=node('li'),title=node('div',events[ev.action]||ev.action);if(ev.client_id){const c=clients.find(c=>c.id===ev.client_id);title.append(node('small',c?c.name:ev.client_id));}const t=node('time',date(ev.at));t.dateTime=new Date(ev.at).toISOString();li.append(title,t);return li;}));if(!list.length)$('events-list').append(node('li',panelText("هنوز رویدادی ثبت نشده است.")));}}
+async function loadPage(){if(currentPage==='admin'){await loadAdmin();return;}if(currentPage==='socks'){await loadSocks();return;}if(['backup','updates','security'].includes(currentPage)){await window.panelMaintenance?.load(currentPage);return;}if(currentPage==='settings'){const s=await api('/settings');$('base-zone').value=s.base_zone;$('country').value=s.country;$('resolvers').value=s.resolvers.join('\n');$('allow-ports').value=s.allow_ports.join(', ');soarSettingsForm.load(s.soarSettings);}else if(currentPage==='events'){const list=await api('/events');$('events-list').replaceChildren(...list.map(ev=>{const li=node('li'),title=node('div',events[ev.action]||ev.action);if(ev.client_id){const c=clients.find(c=>c.id===ev.client_id);title.append(node('small',c?c.name:ev.client_id));}const t=node('time',date(ev.at));t.dateTime=new Date(ev.at).toISOString();li.append(title,t);return li;}));if(!list.length)$('events-list').append(node('li',panelText("هنوز رویدادی ثبت نشده است.")));}}
 $('settings-form').onsubmit=e=>{e.preventDefault();if(!soarSettingsForm.validate())return;withButton(e.submitter,async()=>{const allow=$('allow-ports').value.split(/[,\s،]+/).filter(Boolean).map(Number);if(allow.some(n=>!Number.isInteger(n)||n<1||n>65535))throw Error(panelText("پورت باید عددی بین ۱ تا ۶۵۵۳۵ باشد."));await api('/settings','PUT',{base_zone:$('base-zone').value,country:$('country').value,resolvers:$('resolvers').value.split(/[,\s،]+/).filter(Boolean),allow_ports:allow,soarSettings:soarSettingsForm.read()});$('settings-feedback').textContent=panelText("ذخیره شد. لینک همان حساب را دوباره بگیرید و در اپ Import کنید.");$('preset-state').textContent=panelText("مقادیر ذخیره‌شدهٔ سرور");toast(panelText("تنظیمات ذخیره شد؛ لینک حساب را دوباره Import کنید."));});};
+let socksData={settings:null,status:null,credential:null,clientID:'',publicIP:'',revealed:false};
+function socksHostOnly(value){
+ let v=value.trim();
+ if(/^[a-z][a-z0-9+.-]*:\/\//i.test(v)){try{v=new URL(v).hostname;}catch{}}
+ if(v.startsWith('[')){const end=v.indexOf(']');if(end>1)return v.slice(1,end);}
+ if((v.match(/:/g)||[]).length===1)v=v.split(':')[0];
+ return v;
+}
+function socksListenPort(){
+ const field=$('socks-listen')?.value.trim();
+ const listen=(field||socksData.settings?.socks_listen||socksData.status?.listen||'127.0.0.1:1080').trim();
+ const match=listen.match(/:(\d+)$/);return match?Number(match[1]):1080;
+}
+function socksLocalOnly(){
+ const field=$('socks-listen')?.value.trim();
+ const listen=(field||socksData.settings?.socks_listen||'').trim();
+ const host=(listen.match(/^(.*):\d+$/)||[])[1]||'';
+ return !host||['127.0.0.1','localhost','::1','[::1]'].includes(host);
+}
+function renderSocksJSON(){
+ const credential=socksData.credential,host=socksHostOnly($('socks-endpoint-host').value)||socksData.publicIP||location.hostname||'127.0.0.1';
+ const outbound={tag:'soar-socks',protocol:'socks',settings:{servers:[{address:host,port:socksListenPort(),users:[{user:credential?.username||'ACCOUNT_ID',pass:credential?.password||'ACCOUNT_PASSWORD'}]}]}};
+ $('socks-json').textContent=JSON.stringify(outbound,null,2);
+ $('socks-copy-json').disabled=!credential;
+ $('socks-endpoint-help').textContent=socksLocalOnly()?panelText("آدرس شنود روی loopback است؛ فقط خود این سرور می‌تواند وصل شود."):panelText("مطمئن شوید 3x-ui می‌تواند این آدرس و پورت را ببیند.");
+}
+function renderSocksStatus(){
+ const status=socksData.status||{},listening=!!status.listening,enabled=!!status.enabled,chip=$('socks-status-chip');
+ chip.dataset.live=String(listening);
+ chip.textContent=listening?panelText("در حال شنود"):enabled?panelText("خطا در شنود"):panelText("غیرفعال");
+ $('socks-bound').textContent=status.listen||'—';
+ $('socks-active').textContent=number(status.active||0);
+ $('socks-total').textContent=number(status.total||0);
+ const error=$('socks-status-error');
+ if(enabled&&!listening&&status.last_error){error.textContent=status.last_error;error.hidden=false;}else{error.hidden=true;error.textContent='';}
+ renderSocksJSON();
+}
+function renderSocksClients(){
+ const select=$('socks-client'),options=[new Option(panelText("یک حساب را انتخاب کنید"),'')];
+ for(const client of clients)options.push(new Option(client.name+' — '+states[status(client)],client.id));
+ select.replaceChildren(...options);
+ select.value=clients.some(client=>client.id===socksData.clientID)?socksData.clientID:(clients[0]?.id||'');
+ panelUI.syncSelects();
+}
+function renderSocksCredential(){
+ const credential=socksData.credential,empty=$('socks-cred-empty'),body=$('socks-cred-body');
+ empty.hidden=!!credential;body.hidden=!credential;
+ if(!credential){empty.querySelector('p').textContent=clients.length?panelText("یک حساب را انتخاب کنید."):panelText("هنوز حسابی برای اتصال وجود ندارد.");return;}
+ $('socks-username').textContent=credential.username;
+ $('socks-password').textContent=socksData.revealed?credential.password:'••••••••••••';
+ $('socks-account-state').textContent=credential.enabled?panelText("حساب فعال است."):panelText("حساب غیرفعال یا منقضی است؛ خروجی کار نمی‌کند.");
+ const reveal=$('socks-reveal');reveal.setAttribute('aria-pressed',String(socksData.revealed));reveal.setAttribute('aria-label',socksData.revealed?panelText("پنهان کردن رمز خروجی"):panelText("نمایش رمز خروجی"));
+ renderSocksJSON();
+}
+async function loadSocksCredential(id){
+ const credential=await api('/clients/'+id+'/socks');
+ socksData.credential=credential;socksData.clientID=id;socksData.revealed=false;renderSocksCredential();
+}
+async function loadSocks(){
+ const [socks,settings]=await Promise.all([api('/socks'),api('/settings')]);
+ socksData.status=socks.status;socksData.publicIP=socks.public_ip||'';socksData.settings=settings;
+ $('socks-enabled').checked=!!settings.socks_enabled;
+ $('socks-listen').value=settings.socks_listen||'127.0.0.1:1080';
+ if(!$('socks-endpoint-host').value)$('socks-endpoint-host').value=socks.public_ip||location.hostname||'';
+ renderSocksClients();renderSocksStatus();
+ const id=$('socks-client').value;
+ if(id)await loadSocksCredential(id);else{socksData.credential=null;renderSocksCredential();}
+}
+async function copyText(text){
+ if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(text);return;}catch{}}
+ const field=node('textarea');field.value=text;field.className='copy-helper';field.setAttribute('readonly','');document.body.append(field);field.select();let copied=false;try{copied=document.execCommand('copy');}catch{}field.remove();
+ if(!copied)throw Error(panelText("کپی نشد؛ متن را انتخاب و دستی کپی کنید."));
+}
+$('socks-client').onchange=async()=>{const id=$('socks-client').value;socksData.clientID=id;if(!id){socksData.credential=null;renderSocksCredential();return;}try{await loadSocksCredential(id);}catch(e){toast(message(e),'error');}};
+$('socks-reveal').onclick=()=>{socksData.revealed=!socksData.revealed;renderSocksCredential();};
+$('socks-endpoint-host').addEventListener('input',renderSocksJSON);
+$('socks-listen').addEventListener('input',renderSocksJSON);
+$('socks-form').onsubmit=e=>{
+ e.preventDefault();
+ withButton(e.submitter,async()=>{
+  const listen=$('socks-listen').value.trim();
+  if(!listen)throw Error(panelText("آدرس شنود را وارد کنید."));
+  const current=await api('/settings');
+  await api('/settings','PUT',{...current,socks_enabled:$('socks-enabled').checked,socks_listen:listen});
+  await loadSocks();toast(panelText("تنظیمات خروجی ذخیره شد."),'success');return true;
+ });
+};
+$('socks-rotate').onclick=e=>withButton(e.currentTarget,async()=>{
+ const credential=socksData.credential;if(!credential)return;
+ if(!await confirmAction(panelText("تعویض رمز خروجی"),panelText("رمز قبلی باطل می‌شود و اتصال‌های SOCKS این حساب بسته می‌شوند. لینک تونل و ساب تغییر نمی‌کند.")))return;
+ await api('/clients/'+credential.client_id+'/socks-rotate','POST',{});
+ await loadSocksCredential(credential.client_id);toast(panelText("رمز خروجی تعویض شد؛ اتصال‌های فعلی بسته شدند."),'success');return true;
+});
+for(const button of document.querySelectorAll('[data-socks-copy]'))button.onclick=()=>withButton(button,async()=>{
+ const credential=socksData.credential;if(!credential)return;
+ await copyText(button.dataset.socksCopy==='username'?credential.username:credential.password);
+ toast(panelText("کپی شد."),'success');
+});
+$('socks-copy-json').onclick=e=>withButton(e.currentTarget,async()=>{
+ if(!socksData.credential)return;
+ await copyText($('socks-json').textContent);toast(panelText("خروجی کپی شد."),'success');
+});
 (async()=>{try{const s=await api('/session');await enter(s.csrf);}catch{signOut();}})();

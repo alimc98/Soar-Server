@@ -278,6 +278,19 @@ func execute(args []string) error {
 	}
 	defer listener.Close()
 	handler := panel.NewHTTP(s, m, *proxy)
+	socks := panel.NewSocksServer(m, s)
+	handler.SetSocks(socks)
+	defer socks.Close()
+	cfg, err := s.Settings()
+	if err != nil {
+		return err
+	}
+	if err = socks.Apply(cfg.SocksEnabled, cfg.SocksListen); err != nil {
+		// A misconfigured or occupied port must not take the whole panel down.
+		log.Printf("SOCKS5 egress unavailable: %v", err)
+	} else if cfg.SocksEnabled {
+		log.Printf("SOCKS5 egress listening on %s", cfg.SocksListen)
+	}
 	handler.SetMaintenance(panel.NewOpsClient(*opsSocket), func(ctx context.Context, path string) (panel.BackupSummary, error) {
 		binary, e := os.Executable()
 		if e != nil {

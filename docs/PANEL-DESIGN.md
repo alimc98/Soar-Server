@@ -99,9 +99,69 @@ existing delegated MasterDNS zone. Test on isolated ports before a production sw
 Automated checks cover authenticated HTTPS through unmodified upstream clients,
 account isolation, concurrent exact quotas, restart/backup persistence, rate and
 stream limits, disable/rotate, private destination protection, old-epoch isolation,
-authentication/CSRF, QR generation and responsive browser workflows. Passing these
-checks does not establish reachability on Iranian access networks; field testing
-on those networks remains required.
+authentication/CSRF, QR generation, SOCKS5 authentication/policy/metering and
+responsive browser workflows. Passing these checks does not establish reachability
+on Iranian access networks; field testing on those networks remains required.
+
+## SOCKS5 egress (0.5.0)
+
+The panel can expose an opt-in SOCKS5 listener for a 3x-ui/Xray installation that
+needs an authenticated outbound. It is an independent egress path: CONNECT is
+dialed directly through `Manager.dialEgress`, not through the DNS tunnel. It is
+therefore TCP-only, has no UDP ASSOCIATE, and is not a substitute for the tunnel.
+The default bind is `127.0.0.1:1080`; the listener is disabled until an
+administrator enables it. A remote 3x-ui host requires binding a reachable
+address and restricting it with a firewall or private network.
+
+The username is the 32-character account ID. The password is the base64url
+encoding of `HMAC-SHA256(seed, "WhiteDNS SOCKS5 credential v1:<SocksEpoch>")`,
+using the account's existing Ed25519 seed. It is deterministic for backups and
+account edits, changes when the tunnel key is rotated, and can be revoked
+independently by incrementing `SocksEpoch`. Rotation is a CSRF-checked admin
+action; it closes the account's active SOCKS connections without changing tunnel
+keys, profiles or subscription tokens.
+
+Because CONNECT reuses `dialEgress`, the account's enabled/expiry/quota state,
+aggregate rate, destination-port allowlist, public-destination guard, per-account
+stream limit and the 2048 global stream ceiling all apply. Upload and download
+payload are reserved in the same bbolt accounting path as tunnel traffic; idle
+SOCKS connections do not reserve quota. Reconfiguration binds the replacement
+listener before persisting settings, and a failed bind keeps the previous
+listener serving and reports the error in the SOCKS status endpoint.
+
+Resource limits are intentionally small: 512 accepted SOCKS connections, a 10 s
+handshake deadline, a 20 s dial deadline, and 10 authentication failures per IP
+per 5 minutes. Per-account stream limits cap how many connections one credential
+can hold. The 512 ceiling also covers clients that are still negotiating, so an
+unauthenticated peer can temporarily occupy slots; keep the listener on loopback
+or a trusted network. The password and payload are not encrypted by SOCKS5, so a
+public bind without WireGuard/IPsec/SSH forwarding exposes credentials and
+traffic to any on-path observer. Never expose the port to the public internet
+without an additional encrypted transport.
+
+SOCKS settings live in the same settings record and client epochs in the same
+client records as the rest of the panel. Full backups therefore include them;
+restore restarts the service and rebinds the listener from the restored record.
+If the saved address is already occupied at startup, the panel continues to run
+and the SOCKS page reports `listening: false` with the bind error rather than
+failing the whole service.
+
+## Linux bridge for blackout conditions
+
+The direct SOCKS5 listener above is only useful when the 3x-ui host can reach
+this server's address. During a nationwide blackout that path is unavailable.
+The supported topology instead runs `linux-bridge/` on the Iranian 3x-ui host:
+it parses the account's `soar://` profile, runs the WhiteDNS-patched Soar
+client, and exposes an unencrypted SOCKS5 listener on `127.0.0.1:10886` for the
+local 3x-ui/Xray process. Xray then adds a socks outbound and routes the desired
+inbound traffic through the DNS tunnel. The bridge refuses non-loopback
+listeners; use SSH or WireGuard forwarding if 3x-ui is not on the same host.
+It supports CONNECT/TCP only, enforces the local profile's stream count and dial
+timeout, and sends all traffic through the same server-side quota, rate, port
+allowlist, public-destination and accounting checks as tunnel traffic. The
+profile must be provisioned before a blackout because the bridge cannot fetch a
+subscription from an unreachable panel. See `linux-bridge/README.fa.md` for the
+installer, systemd unit, 3x-ui JSON and rotation guidance.
 
 
 ## Subscriptions and interface language (0.3.0)
