@@ -5,8 +5,10 @@ WhiteDNS builds the management panel and installer. The tunnel engine is
 [WhiteDNS CottenDNS fork](https://github.com/WhiteDNS/CottenDNS). The dashboard uses original
 code with a workflow inspired by 3x-ui; Xray is not installed.
 
-Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64,
+Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64 or arm64/aarch64,
 with root/sudo and systemd. No Docker, Go, Node or external database is required.
+
+Panel 0.8.0 provides separate archives for each architecture. The installer rejects mismatched bundles before installation. On every run, the public bootstrap resolves GitHub's latest stable panel release and downloads the matching architecture archive and checksum. It stops before installation if discovery, download or verification fails; it never silently installs an older version.
 
 ## 1. Prepare a server and DNS
 
@@ -45,7 +47,7 @@ sudo apt-get install -y curl
 
 Follow the numbered English prompts. Enter your delegated zone, for example
 `soar.example.com`. Pick an administrator username and strong password. The
-installer downloads the pinned stable release, verifies its checksum, installs
+installer discovers the latest stable release, downloads the matching architecture archive, verifies its checksum, installs
 the services and prints the complete login URL. Save that URL: its random path
 is required. The bare IP/domain intentionally does not show a login page.
 
@@ -248,3 +250,10 @@ Existing accounts remain Soar and keep their links. Edit an account to enable bo
 The local installer and maintenance helper prepare active UFW rules automatically. The VPS provider firewall/NAT must permit both UDP/53 and TCP/53. DoT/DoH are not exposed by this panel release.
 
 Local 0.5.0 supports up to eight independent tunnel domains and eight HTTPS panel hostnames. Domain changes preserve account keys, quotas and subscription credentials. The initial installation still requires only one tunnel domain. See [the domain guide (Persian)](DOMAINS.fa.md) for DNS records, alternative subscription URLs and SSH recovery. Server-side DNS checks do not establish reachability on a filtered client network.
+
+
+## MasterDNS accounts
+
+Panel 0.8.0 adds MasterDnsVPN. Select MasterDNS, a pair including it, or All three engines in the account editor. Refresh the existing subscription in WhiteDNS; direct MasterDNS links and QR codes are also available. The account uses the existing DNS delegation with an isolated MasterDNS domain and key.
+
+Quota, rate, expiry and TCP stream budgets are shared across the selected engines. The separate MasterDNS session limit is 1–255, default 255; sessions are not device counts. Existing account selections stay unchanged. MasterDNS transports TCP over UDP DNS; arbitrary UDP/QUIC is not added. See [MasterDNS integration](MASTERDNS.md).

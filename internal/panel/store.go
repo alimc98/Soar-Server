@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
@@ -28,7 +29,18 @@ var ErrDenied = errors.New("account disabled, expired or out of traffic")
 var ErrNotFound = errors.New("account not found")
 var ErrConflict = errors.New("account changed; refresh and retry")
 
-const MaxClients = 512
+const (
+	MaxClients                   = 512
+	MaxSoarSessionLimit          = 32768
+	MaxCottenSessionLimit        = 65535
+	MaxMasterDNSSessionLimit     = 255
+	DefaultMasterDNSSessionLimit = MaxMasterDNSSessionLimit
+	DefaultSoarSessionLimit      = MaxSoarSessionLimit
+	DefaultCottenSessionLimit    = MaxCottenSessionLimit
+	// Zero disables aggregate admission limits; positive limits use a portable
+	// signed 32-bit range rather than the width of the host's int type.
+	MaxStreamLimit = 2147483647
+)
 
 // DefaultSocksListen keeps the SOCKS5 egress private to the panel host. Operators
 // who need a remote 3x-ui server can bind it to a private/public address and must
@@ -46,6 +58,7 @@ type Settings struct {
 	Country           string            `json:"country"`
 	AllowPorts        []uint16          `json:"allow_ports"`
 	SoarSettings      *ProfileSettings  `json:"soarSettings,omitempty"`
+	ServerStreamLimit int               `json:"server_stream_limit"`
 	SocksEnabled      bool              `json:"socks_enabled"`
 	SocksListen       string            `json:"socks_listen"`
 }
@@ -57,6 +70,9 @@ func (s *Settings) normalize() {
 }
 
 func (s Settings) Validate() error {
+	if s.ServerStreamLimit < 0 || s.ServerStreamLimit > MaxStreamLimit {
+		return fmt.Errorf("server_stream_limit must be between 0 and %d", MaxStreamLimit)
+	}
 	if s.PublicIP != "" {
 		if ip, err := netip.ParseAddr(s.PublicIP); err != nil || !ip.Is4() || !ip.IsGlobalUnicast() {
 			return errors.New("invalid public IPv4 address")
@@ -115,38 +131,44 @@ func (s Settings) Validate() error {
 }
 
 type Client struct {
-	Engines        string `json:"engines,omitempty"`
-	InstallerProbe bool   `json:"installer_probe,omitempty"`
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Note           string `json:"note"`
-	Zone           string `json:"zone"`
-	PublicKey      string `json:"public_key"`
-	Enabled        bool   `json:"enabled"`
-	QuotaBytes     int64  `json:"quota_bytes"`
-	UploadBytes    int64  `json:"upload_bytes"`
-	DownloadBytes  int64  `json:"download_bytes"`
-	ExpiresAt      int64  `json:"expires_at"`
-	RateBytes      int64  `json:"rate_bytes"`
-	StreamLimit    int    `json:"stream_limit"`
-	Revision       uint64 `json:"revision"`
-	UsageEpoch     uint64 `json:"usage_epoch"`
-	SocksEpoch     uint64 `json:"socks_epoch,omitempty"`
-	CreatedAt      int64  `json:"created_at"`
-	UpdatedAt      int64  `json:"updated_at"`
-	LastSeen       int64  `json:"last_seen"`
+	Engines               string `json:"engines,omitempty"`
+	InstallerProbe        bool   `json:"installer_probe,omitempty"`
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	Note                  string `json:"note"`
+	Zone                  string `json:"zone"`
+	PublicKey             string `json:"public_key"`
+	Enabled               bool   `json:"enabled"`
+	QuotaBytes            int64  `json:"quota_bytes"`
+	UploadBytes           int64  `json:"upload_bytes"`
+	DownloadBytes         int64  `json:"download_bytes"`
+	ExpiresAt             int64  `json:"expires_at"`
+	RateBytes             int64  `json:"rate_bytes"`
+	StreamLimit           int    `json:"stream_limit"`
+	SoarSessionLimit      int    `json:"soar_session_limit"`
+	CottenSessionLimit    int    `json:"cotten_session_limit"`
+	MasterDNSSessionLimit int    `json:"masterdns_session_limit"`
+	Revision              uint64 `json:"revision"`
+	UsageEpoch            uint64 `json:"usage_epoch"`
+	SocksEpoch            uint64 `json:"socks_epoch,omitempty"`
+	CreatedAt             int64  `json:"created_at"`
+	UpdatedAt             int64  `json:"updated_at"`
+	LastSeen              int64  `json:"last_seen"`
 }
 
 type ClientInput struct {
-	Engines     string `json:"engines,omitempty"`
-	Name        string `json:"name"`
-	Note        string `json:"note"`
-	Enabled     bool   `json:"enabled"`
-	QuotaBytes  int64  `json:"quota_bytes"`
-	ExpiresAt   int64  `json:"expires_at"`
-	RateBytes   int64  `json:"rate_bytes"`
-	StreamLimit int    `json:"stream_limit"`
-	Revision    uint64 `json:"revision"`
+	Engines               string `json:"engines,omitempty"`
+	Name                  string `json:"name"`
+	Note                  string `json:"note"`
+	Enabled               bool   `json:"enabled"`
+	QuotaBytes            int64  `json:"quota_bytes"`
+	ExpiresAt             int64  `json:"expires_at"`
+	RateBytes             int64  `json:"rate_bytes"`
+	StreamLimit           int    `json:"stream_limit"`
+	SoarSessionLimit      *int   `json:"soar_session_limit,omitempty"`
+	CottenSessionLimit    *int   `json:"cotten_session_limit,omitempty"`
+	MasterDNSSessionLimit *int   `json:"masterdns_session_limit,omitempty"`
+	Revision              uint64 `json:"revision"`
 }
 
 func (c Client) Used() int64 { return c.UploadBytes + c.DownloadBytes }
@@ -163,16 +185,44 @@ func (c Client) Status(now time.Time) string {
 	return "active"
 }
 func (c ClientInput) validate() error {
-	if c.Engines != "" && c.Engines != "soar" && c.Engines != "cotten" && c.Engines != "both" {
-		return errors.New("choose Soar, Cotten or both")
+	if !validEngines(c.Engines) {
+		return errors.New("choose a supported Soar, Cotten and MasterDNS engine combination")
 	}
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 160 || len(c.Note) > 2048 {
 		return errors.New("name required (max 160 bytes); note max 2048 bytes")
 	}
-	if c.QuotaBytes < 0 || c.QuotaBytes > 1<<60 || c.ExpiresAt < 0 || c.RateBytes < 0 || c.RateBytes > 1<<30 || c.StreamLimit < 1 || c.StreamLimit > 128 {
+	if c.QuotaBytes < 0 || c.QuotaBytes > 1<<60 || c.ExpiresAt < 0 || c.RateBytes < 0 || c.RateBytes > 1<<30 || c.StreamLimit < 0 || c.StreamLimit > MaxStreamLimit {
 		return errors.New("invalid quota, expiry, rate or stream limit")
 	}
+	return c.validateSessionLimits()
+}
+
+func (c ClientInput) validateSessionLimits() error {
+	if c.MasterDNSSessionLimit != nil && (*c.MasterDNSSessionLimit < 1 || *c.MasterDNSSessionLimit > MaxMasterDNSSessionLimit) {
+		return fmt.Errorf("masterdns_session_limit must be between 1 and %d", MaxMasterDNSSessionLimit)
+	}
+	if c.SoarSessionLimit != nil && (*c.SoarSessionLimit < 1 || *c.SoarSessionLimit > MaxSoarSessionLimit) {
+		return fmt.Errorf("soar_session_limit must be between 1 and %d", MaxSoarSessionLimit)
+	}
+	if c.CottenSessionLimit != nil && (*c.CottenSessionLimit < 1 || *c.CottenSessionLimit > MaxCottenSessionLimit) {
+		return fmt.Errorf("cotten_session_limit must be between 1 and %d", MaxCottenSessionLimit)
+	}
 	return nil
+}
+
+// Old databases omit these fields. Resolve their zero values in memory so
+// reading an account never rewrites its identity, usage, timestamps or revision.
+func (c *Client) normalizeSessionLimits() error {
+	if c.MasterDNSSessionLimit == 0 {
+		c.MasterDNSSessionLimit = DefaultMasterDNSSessionLimit
+	}
+	if c.SoarSessionLimit == 0 {
+		c.SoarSessionLimit = DefaultSoarSessionLimit
+	}
+	if c.CottenSessionLimit == 0 {
+		c.CottenSessionLimit = DefaultCottenSessionLimit
+	}
+	return (ClientInput{SoarSessionLimit: &c.SoarSessionLimit, CottenSessionLimit: &c.CottenSessionLimit, MasterDNSSessionLimit: &c.MasterDNSSessionLimit}).validateSessionLimits()
 }
 
 type Admin struct {
@@ -185,7 +235,10 @@ type Event struct {
 	Action   string `json:"action"`
 	ClientID string `json:"client_id,omitempty"`
 }
-type Store struct{ db *bolt.DB }
+type Store struct {
+	db    *bolt.DB
+	usage *usageBatcher
+}
 
 var meta = []byte("meta")
 var clients = []byte("clients")
@@ -214,9 +267,15 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
+	s.usage = newUsageBatcher(db)
 	return s, nil
 }
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.usage != nil {
+		s.usage.close()
+	}
+	return s.db.Close()
+}
 func putJSON(b *bolt.Bucket, k []byte, v any) error {
 	raw, e := json.Marshal(v)
 	if e != nil {
@@ -282,6 +341,17 @@ func (s *Store) Settings() (v Settings, e error) {
 	return
 }
 func (s *Store) SaveSettings(v Settings) error {
+	return s.saveSettings(v, &v.ServerStreamLimit)
+}
+
+// An omitted HTTP field preserves the latest committed limit in the same
+// transaction, even if another administrator changed it after the form loaded.
+func (s *Store) saveSettings(v Settings, streamLimit *int) error {
+	if streamLimit == nil {
+		v.ServerStreamLimit = 0
+	} else {
+		v.ServerStreamLimit = *streamLimit
+	}
 	v.normalize()
 	if e := v.Validate(); e != nil {
 		return e
@@ -291,6 +361,9 @@ func (s *Store) SaveSettings(v Settings) error {
 		var old Settings
 		if e := json.Unmarshal(b.Get([]byte("settings")), &old); e != nil {
 			return e
+		}
+		if streamLimit == nil {
+			v.ServerStreamLimit = old.ServerStreamLimit
 		}
 		if old.BaseZone != v.BaseZone {
 			return errors.New("base zone is fixed; changing it invalidates existing profiles")
@@ -357,7 +430,8 @@ func (s *Store) create(in ClientInput, installerProbe bool) (c Client, e error) 
 		return
 	}
 	now := time.Now().UnixMilli()
-	c = Client{ID: id, Zone: zone, PublicKey: pub, CreatedAt: now, UpdatedAt: now, Revision: 1, UsageEpoch: 1, InstallerProbe: installerProbe}
+	c = Client{ID: id, Zone: zone, PublicKey: pub, CreatedAt: now, UpdatedAt: now, Revision: 1, UsageEpoch: 1, InstallerProbe: installerProbe,
+		SoarSessionLimit: DefaultSoarSessionLimit, CottenSessionLimit: DefaultCottenSessionLimit, MasterDNSSessionLimit: DefaultMasterDNSSessionLimit}
 	applyInput(&c, in)
 	e = s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(clients)
@@ -386,6 +460,15 @@ func applyInput(c *Client, in ClientInput) {
 	c.ExpiresAt = in.ExpiresAt
 	c.RateBytes = in.RateBytes
 	c.StreamLimit = in.StreamLimit
+	if in.MasterDNSSessionLimit != nil {
+		c.MasterDNSSessionLimit = *in.MasterDNSSessionLimit
+	}
+	if in.SoarSessionLimit != nil {
+		c.SoarSessionLimit = *in.SoarSessionLimit
+	}
+	if in.CottenSessionLimit != nil {
+		c.CottenSessionLimit = *in.CottenSessionLimit
+	}
 }
 func getClient(tx *bolt.Tx, id string) (c Client, e error) {
 	raw := tx.Bucket(clients).Get([]byte(id))
@@ -393,6 +476,9 @@ func getClient(tx *bolt.Tx, id string) (c Client, e error) {
 		return c, ErrNotFound
 	}
 	e = json.Unmarshal(raw, &c)
+	if e == nil {
+		e = c.normalizeSessionLimits()
+	}
 	return
 }
 func (s *Store) Get(id string) (c Client, e error) {
@@ -405,6 +491,9 @@ func (s *Store) List() (out []Client, e error) {
 		return tx.Bucket(clients).ForEach(func(k, v []byte) error {
 			var c Client
 			if e := json.Unmarshal(v, &c); e != nil {
+				return e
+			}
+			if e := c.normalizeSessionLimits(); e != nil {
 				return e
 			}
 			out = append(out, c)
@@ -447,10 +536,16 @@ func (s *Store) Edit(id string, in ClientInput) (c Client, e error) {
 	return
 }
 func (s *Store) ResetUsage(id string) error {
+	return s.resetUsage(id, nil)
+}
+func (s *Store) resetUsage(id string, revision *uint64) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		c, e := getClient(tx, id)
 		if e != nil {
 			return e
+		}
+		if revision != nil && c.Revision != *revision {
+			return ErrConflict
 		}
 		c.UploadBytes = 0
 		c.DownloadBytes = 0
@@ -464,6 +559,9 @@ func (s *Store) ResetUsage(id string) error {
 	})
 }
 func (s *Store) Rotate(id string) (c Client, e error) {
+	return s.rotate(id, nil)
+}
+func (s *Store) rotate(id string, revision *uint64) (c Client, e error) {
 	cfg, e := s.Settings()
 	if e != nil {
 		return
@@ -476,6 +574,9 @@ func (s *Store) Rotate(id string) (c Client, e error) {
 		c, e = getClient(tx, id)
 		if e != nil {
 			return e
+		}
+		if revision != nil && c.Revision != *revision {
+			return ErrConflict
 		}
 		c.Zone = zone
 		c.PublicKey = pub
@@ -559,9 +660,16 @@ func (s *Store) RotateSocks(id string) (c Client, e error) {
 }
 
 func (s *Store) Delete(id string) error {
+	return s.deleteRevision(id, nil)
+}
+func (s *Store) deleteRevision(id string, revision *uint64) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		if _, e := getClient(tx, id); e != nil {
+		c, e := getClient(tx, id)
+		if e != nil {
 			return e
+		}
+		if revision != nil && c.Revision != *revision {
+			return ErrConflict
 		}
 		return deleteClient(tx, id)
 	})
@@ -600,60 +708,14 @@ func (s *Store) reservePayload(id string, n int, up bool, expected uint64, datag
 	if n <= 0 {
 		return
 	}
-	e = s.db.Update(func(tx *bolt.Tx) error {
-		c, e := getClient(tx, id)
-		if e != nil {
-			return e
-		}
-		if c.Status(time.Now()) != "active" || expected != 0 && c.UsageEpoch != expected {
-			return ErrDenied
-		}
-		allowed = min(n, 32*1024)
-		if datagram {
-			allowed = n
-		}
-		if c.QuotaBytes > 0 {
-			if datagram && int64(n) > c.QuotaBytes-c.Used() {
-				return ErrDenied
-			}
-			allowed = min(allowed, int(c.QuotaBytes-c.Used()))
-		}
-		if allowed <= 0 {
-			return ErrDenied
-		}
-		if c.Used() > 1<<60 {
-			return errors.New("usage counter capacity reached")
-		}
-		if up {
-			c.UploadBytes += int64(allowed)
-		} else {
-			c.DownloadBytes += int64(allowed)
-		}
-		revision = c.UsageEpoch
-		c.LastSeen = time.Now().UnixMilli()
-		return putJSON(tx.Bucket(clients), []byte(id), c)
-	})
-	return
+	r := s.usage.submit(usageRequest{id: id, n: n, up: up, epoch: expected, datagram: datagram})
+	return r.allowed, r.epoch, r.err
 }
 func (s *Store) refund(id string, n int, up bool, revision uint64) error {
 	if n <= 0 {
 		return nil
 	}
-	return s.db.Update(func(tx *bolt.Tx) error {
-		c, e := getClient(tx, id)
-		if e != nil {
-			return e
-		}
-		if c.UsageEpoch != revision {
-			return nil
-		}
-		if up {
-			c.UploadBytes = max(0, c.UploadBytes-int64(n))
-		} else {
-			c.DownloadBytes = max(0, c.DownloadBytes-int64(n))
-		}
-		return putJSON(tx.Bucket(clients), []byte(id), c)
-	})
+	return s.usage.submit(usageRequest{id: id, n: n, up: up, epoch: revision, refund: true}).err
 }
 func addEvent(tx *bolt.Tx, action, id string) error {
 	b := tx.Bucket(events)
@@ -690,7 +752,7 @@ func (s *Store) Events() (out []Event, e error) {
 	return
 }
 func (s *Store) Backup(w io.Writer) error {
-	return s.db.View(func(tx *bolt.Tx) error { _, e := tx.WriteTo(w); return e })
+	return s.BackupContext(context.Background(), w)
 }
 
 func (s *Store) Profile(id string) (link string, e error) {
